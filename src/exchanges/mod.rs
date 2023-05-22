@@ -19,6 +19,14 @@ pub trait OrderBookStream {
         &self,
         ticker: &str,
     ) -> Result<Receiver<Order>, OrderBookError>;
-
-    //TODO: maybe reconnect
 }
+
+// #[async_trait]
+// pub trait MarketPriceStream {
+//     async fn spawn_order_book_stream(
+//         &self,
+//         ticker: &str,
+//     ) -> Result<Receiver<Order>, OrderBookError>;
+
+//     //TODO: maybe reconnect
+// }

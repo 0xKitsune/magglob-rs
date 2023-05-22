@@ -1,11 +1,17 @@
 use async_trait::async_trait;
+use futures::StreamExt;
+use serde_json::Value;
 use tokio::sync::mpsc::Receiver;
+use tungstenite::Message;
 
 use crate::{error::OrderBookError, red_black_book::Order};
 
 use super::OrderBookStream;
 
-const BASE_ENDPOINT: &str = "wss://stream.binance.com:9443";
+const WS_BASE_ENDPOINT: &str = "wss://stream.binance.com:9443/ws/";
+const DEPTH_SNAPSHOT_BASE_ENDPOINT: &str = "https://api.binance.com/api/v3/depth?symbol=";
+
+const DEPTH_LIMIT: &str = "1000";
 
 // Websocket Market Streams
 
@@ -27,6 +33,45 @@ impl OrderBookStream for Binance {
         &self,
         ticker: &str,
     ) -> Result<Receiver<Order>, OrderBookError> {
+        let order_book_endpoint = WS_BASE_ENDPOINT.to_owned() + ticker + "@depth";
+
+        // Open the WebSocket stream
+        let (mut order_book_stream, _) = tokio_tungstenite::connect_async(order_book_endpoint)
+            .await
+            .expect("Handle this error");
+
+        let depth_snapshot_endpoint =
+            DEPTH_SNAPSHOT_BASE_ENDPOINT.to_owned() + ticker + "&limit=" + DEPTH_LIMIT;
+        // Get the depth snapshot
+        let resp: Value = reqwest::get(depth_snapshot_endpoint)
+            .await
+            .expect("handle this error")
+            .json()
+            .await?;
+
+        let mut last_update_id = resp.U;
+
+        // Process the stream events
+        while let Some(msg) = order_book_stream.next().await {
+            let msg = msg?;
+            match msg {
+                Message::Text(text) => {
+                    let event: Value = serde_json::from_str(&text)?;
+                }
+
+                Message::Ping(ping) => {
+                    order_book_stream.send(Message::Pong(ping)).await?;
+                }
+
+                Message::Close(close_msg) => {
+                    println!("Received close message: {:?}", close_msg);
+
+                    //TODO: reconnect
+                }
+                _ => (),
+            }
+        }
+
         todo!()
     }
 }
