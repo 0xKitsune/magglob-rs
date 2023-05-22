@@ -38,7 +38,7 @@ impl OrderBook {
     //Then you can update the corresponding tx rx depending on the orderbook that is spawned
 }
 
-struct Order {
+pub struct Order {
     id: String,
     exchange: Exchange,
     price: f64,
