@@ -1007,6 +1007,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ordered-float"
+version = "3.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2fc2dbde8f8a79f2102cc474ceb0ad68e3b80b85289ea62389b60e66777e4213"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
 name = "os_str_bytes"
 version = "6.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1164,7 +1173,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "rbb"
+name = "rb-book"
 version = "0.1.0"
 dependencies = [
  "async-trait",
@@ -1172,6 +1181,7 @@ dependencies = [
  "futures",
  "log",
  "log4rs",
+ "ordered-float 3.7.0",
  "reqwest",
  "serde",
  "serde_derive",
@@ -1403,7 +1413,7 @@ version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f3a1a3341211875ef120e117ea7fd5228530ae7e7036a779fdc9117be6b3282c"
 dependencies = [
- "ordered-float",
+ "ordered-float 2.10.0",
  "serde",
 ]
 

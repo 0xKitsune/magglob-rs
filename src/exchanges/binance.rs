@@ -3,10 +3,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use crate::exchanges::Exchange;
-use crate::red_black_book::PriceLevelUpdate;
+use crate::order_book::PriceLevelUpdate;
 use crate::{
     error::OrderBookError,
-    red_black_book::{OrderBook, PriceLevel},
+    order_book::{OrderBook, PriceLevel},
 };
 
 use async_trait::async_trait;
@@ -31,9 +31,10 @@ use super::OrderBookService;
 
 const WS_BASE_ENDPOINT: &str = "wss://stream.binance.com:9443/ws/";
 const DEPTH_SNAPSHOT_BASE_ENDPOINT: &str = "https://api.binance.com/api/v3/depth?symbol=";
-const DEFAULT_DEPTH_LIMIT: &str = "10"; //TODO: 5000 should cover all per the binance docs
-const STREAM_BUFFER: usize = 5000;
+const DEFAULT_DEPTH_LIMIT: &str = "1000";
+const STREAM_BUFFER: usize = 5000; //TODO: 5000 should cover all per the binance docs
 
+//Add a comment for what this is
 const GET_DEPTH_SNAPSHOT: Vec<u8> = vec![];
 
 // Websocket Market Streams
@@ -105,13 +106,12 @@ pub enum OrderBookEventType {
 #[async_trait]
 impl OrderBookService for Binance {
     async fn spawn_order_book_service(
-        &self,
         ticker: &str,
         price_level_tx: Sender<PriceLevelUpdate>,
     ) -> Result<Vec<JoinHandle<Result<(), OrderBookError>>>, OrderBookError> {
         //TODO: handle reconnects in an efficient and safe way
 
-        let (mut order_book_rx, stream_handles) = self.spawn_order_book_stream(ticker).await?;
+        let (mut order_book_rx, stream_handles) = spawn_order_book_stream(ticker).await?;
 
         let mut last_update_id = 0;
         let price_level_update_handle = tokio::spawn(async move {
@@ -119,13 +119,6 @@ impl OrderBookService for Binance {
                 if order_book_update.final_updated_id <= last_update_id {
                     continue;
                 } else {
-                    dbg!(
-                        "Ok",
-                        last_update_id,
-                        order_book_update.first_update_id,
-                        order_book_update.final_updated_id
-                    );
-
                     //TODO: make a note that the first update id will always be zero
                     if order_book_update.first_update_id <= last_update_id + 1
                         && order_book_update.final_updated_id >= last_update_id + 1
@@ -150,19 +143,10 @@ impl OrderBookService for Binance {
                                 .await?;
                         }
                     } else {
-                        dbg!(
-                            "Bad",
-                            last_update_id,
-                            order_book_update.first_update_id,
-                            order_book_update.final_updated_id
-                        );
-
                         return Err(BinanceError::InvalidUpdateId.into());
                     }
 
-                    dbg!("pre update", last_update_id);
                     last_update_id = order_book_update.final_updated_id;
-                    dbg!("post update", last_update_id);
                 }
             }
 
@@ -181,127 +165,125 @@ impl Binance {
     pub fn new() -> Self {
         Binance {}
     }
+}
 
-    pub async fn spawn_order_book_stream(
-        &self,
-        ticker: &str,
-    ) -> Result<
-        (
-            Receiver<OrderBookUpdate>,
-            Vec<JoinHandle<Result<(), OrderBookError>>>,
-        ),
-        OrderBookError,
-    > {
-        let stream_ticker = ticker.to_lowercase();
-        let depth_snapshot_ticker = ticker.to_uppercase();
+async fn spawn_order_book_stream(
+    ticker: &str,
+) -> Result<
+    (
+        Receiver<OrderBookUpdate>,
+        Vec<JoinHandle<Result<(), OrderBookError>>>,
+    ),
+    OrderBookError,
+> {
+    let stream_ticker = ticker.to_lowercase();
+    let depth_snapshot_ticker = ticker.to_uppercase();
 
-        let (ws_stream_tx, mut ws_stream_rx) = tokio::sync::mpsc::channel::<Message>(STREAM_BUFFER);
+    let (ws_stream_tx, mut ws_stream_rx) = tokio::sync::mpsc::channel::<Message>(STREAM_BUFFER);
 
-        //spawn a thread that handles the stream and buffers the results
-        let stream_handle = tokio::spawn(async move {
-            let ws_stream_tx = ws_stream_tx.clone();
-            loop {
-                //Establish an infinite loop to handle a ws stream with reconnects
-                let order_book_endpoint = WS_BASE_ENDPOINT.to_owned() + &stream_ticker + "@depth";
+    //spawn a thread that handles the stream and buffers the results
+    let stream_handle = tokio::spawn(async move {
+        let ws_stream_tx = ws_stream_tx.clone();
+        loop {
+            //Establish an infinite loop to handle a ws stream with reconnects
+            let order_book_endpoint = WS_BASE_ENDPOINT.to_owned() + &stream_ticker + "@depth";
 
-                let (mut order_book_stream, _) =
-                    tokio_tungstenite::connect_async(order_book_endpoint).await?;
-                log::info!("Ws connection established");
+            let (mut order_book_stream, _) =
+                tokio_tungstenite::connect_async(order_book_endpoint).await?;
+            log::info!("Ws connection established");
 
-                ws_stream_tx
-                    .send(Message::Binary(GET_DEPTH_SNAPSHOT))
-                    .await
-                    .map_err(BinanceError::from)?;
+            ws_stream_tx
+                .send(Message::Binary(GET_DEPTH_SNAPSHOT))
+                .await
+                .map_err(BinanceError::from)?;
 
-                while let Some(Ok(message)) = order_book_stream.next().await {
-                    match message {
-                        tungstenite::Message::Text(_) => {
-                            ws_stream_tx
-                                .send(message)
-                                .await
-                                .map_err(BinanceError::from)?;
-                        }
-
-                        tungstenite::Message::Ping(_) => {
-                            log::info!("Ping received");
-                            order_book_stream.send(Message::Pong(Vec::new())).await.ok();
-                            log::info!("Pong sent");
-                        }
-
-                        tungstenite::Message::Close(_) => {
-                            log::info!("Ws connection closed, reconnecting...");
-                            break;
-                        }
-
-                        other => {
-                            log::warn!("{other:?}");
-                        }
-                    }
-                }
-            }
-        });
-
-        let (order_book_update_tx, order_book_update_rx) =
-            tokio::sync::mpsc::channel::<OrderBookUpdate>(STREAM_BUFFER);
-        let order_book_update_handle = tokio::spawn(async move {
-            while let Some(message) = ws_stream_rx.recv().await {
+            while let Some(Ok(message)) = order_book_stream.next().await {
                 match message {
-                    tungstenite::Message::Text(message) => {
-                        order_book_update_tx
-                            .send(serde_json::from_str(&message)?)
+                    tungstenite::Message::Text(_) => {
+                        ws_stream_tx
+                            .send(message)
                             .await
                             .map_err(BinanceError::from)?;
                     }
 
-                    tungstenite::Message::Binary(message) => {
-                        //This is an internal message signaling that we should get the depth snapshot and send it through the channel
-                        if message.is_empty() {
-                            let depth_snapshot =
-                                Binance::get_depth_snapshot(&depth_snapshot_ticker).await?;
-
-                            //TODO: there might be a more efficient way to do this, we are making sure we are not missing any orders using redundant logic with this approach but it is prob a little slow
-                            order_book_update_tx
-                                .send(OrderBookUpdate {
-                                    event_type: OrderBookEventType::DepthUpdate,
-                                    event_time: 0,
-                                    first_update_id: 0,
-                                    final_updated_id: depth_snapshot.last_update_id,
-                                    bids: depth_snapshot.bids,
-                                    asks: depth_snapshot.asks,
-                                })
-                                .await
-                                .map_err(BinanceError::from)?;
-                        }
+                    tungstenite::Message::Ping(_) => {
+                        log::info!("Ping received");
+                        order_book_stream.send(Message::Pong(Vec::new())).await.ok();
+                        log::info!("Pong sent");
                     }
 
-                    _ => {}
+                    tungstenite::Message::Close(_) => {
+                        log::info!("Ws connection closed, reconnecting...");
+                        break;
+                    }
+
+                    other => {
+                        log::warn!("{other:?}");
+                    }
                 }
             }
-
-            Ok::<(), OrderBookError>(())
-        });
-
-        Ok((
-            order_book_update_rx,
-            vec![stream_handle, order_book_update_handle],
-        ))
-    }
-
-    pub async fn get_depth_snapshot(ticker: &str) -> Result<DepthSnapshot, OrderBookError> {
-        let depth_snapshot_endpoint =
-            DEPTH_SNAPSHOT_BASE_ENDPOINT.to_owned() + &ticker + "&limit=" + DEFAULT_DEPTH_LIMIT;
-
-        // Get the depth snapshot
-        let depth_response = reqwest::get(depth_snapshot_endpoint).await?;
-
-        if depth_response.status().is_success() {
-            Ok(depth_response.json::<DepthSnapshot>().await?)
-        } else {
-            Err(OrderBookError::HTTPError(
-                String::from_utf8(depth_response.bytes().await?.to_vec())
-                    .expect("TODO: handle this error"),
-            ))
         }
+    });
+
+    let (order_book_update_tx, order_book_update_rx) =
+        tokio::sync::mpsc::channel::<OrderBookUpdate>(STREAM_BUFFER);
+    let order_book_update_handle = tokio::spawn(async move {
+        while let Some(message) = ws_stream_rx.recv().await {
+            match message {
+                tungstenite::Message::Text(message) => {
+                    order_book_update_tx
+                        .send(serde_json::from_str(&message)?)
+                        .await
+                        .map_err(BinanceError::from)?;
+                }
+
+                tungstenite::Message::Binary(message) => {
+                    //This is an internal message signaling that we should get the depth snapshot and send it through the channel
+                    if message.is_empty() {
+                        let depth_snapshot = get_depth_snapshot(&depth_snapshot_ticker).await?;
+
+                        //TODO: there might be a more efficient way to do this, we are making sure we are not missing any orders using redundant logic with this approach but it is prob a little slow
+                        order_book_update_tx
+                            .send(OrderBookUpdate {
+                                event_type: OrderBookEventType::DepthUpdate,
+                                event_time: 0,
+                                first_update_id: 0,
+                                final_updated_id: depth_snapshot.last_update_id,
+                                bids: depth_snapshot.bids,
+                                asks: depth_snapshot.asks,
+                            })
+                            .await
+                            .map_err(BinanceError::from)?;
+                    }
+                }
+
+                _ => {}
+            }
+        }
+
+        Ok::<(), OrderBookError>(())
+    });
+
+    Ok((
+        order_book_update_rx,
+        vec![stream_handle, order_book_update_handle],
+    ))
+}
+
+async fn get_depth_snapshot(ticker: &str) -> Result<DepthSnapshot, OrderBookError> {
+    let depth_snapshot_endpoint =
+        DEPTH_SNAPSHOT_BASE_ENDPOINT.to_owned() + &ticker + "&limit=" + DEFAULT_DEPTH_LIMIT;
+
+    // Get the depth snapshot
+    let depth_response = reqwest::get(depth_snapshot_endpoint).await?;
+
+    if depth_response.status().is_success() {
+        Ok(depth_response.json::<DepthSnapshot>().await?)
+    } else {
+        Err(OrderBookError::HTTPError(
+            String::from_utf8(depth_response.bytes().await?.to_vec())
+                .expect("TODO: handle this error"),
+        ))
     }
 }
 
@@ -352,18 +334,19 @@ pub enum BinanceError {
 mod tests {
     use crate::{
         exchanges::{binance::Binance, OrderBookService},
-        red_black_book::{PriceLevel, PriceLevelUpdate},
+        order_book::{PriceLevel, PriceLevelUpdate},
     };
 
     #[tokio::test]
     async fn test_order_stream() {
         let (tx, mut rx) = tokio::sync::mpsc::channel::<PriceLevelUpdate>(5000);
-        let binance_handles = Binance::new()
-            .spawn_order_book_service("bnbbtc", tx)
+        let binance_handles = Binance::spawn_order_book_service("bnbbtc", tx)
             .await
             .expect("handle this error");
 
-        while let Some(price_level_update) = rx.recv().await {}
+        while let Some(price_level_update) = rx.recv().await {
+            dbg!(price_level_update);
+        }
 
         for handle in binance_handles {
             handle.await.expect("Waiting").expect("waiting");

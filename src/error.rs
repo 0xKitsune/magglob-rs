@@ -1,4 +1,4 @@
-use crate::{exchanges::binance::BinanceError, red_black_book::PriceLevelUpdate};
+use crate::{exchanges::binance::BinanceError, order_book::PriceLevelUpdate};
 
 #[derive(thiserror::Error, Debug)]
 pub enum OrderBookError {
