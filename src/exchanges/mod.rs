@@ -14,8 +14,11 @@ pub enum Exchange {
 }
 
 #[async_trait]
-pub trait OrderBookStream {
-    async fn spawn_order_book_stream(ticker: &str) -> Result<Receiver<Order>, OrderBookError>;
+pub trait OrderBookService {
+    async fn spawn_order_book_service(
+        &self,
+        ticker: &str,
+    ) -> Result<Receiver<Order>, OrderBookError>;
 }
 
 // #[async_trait]

@@ -1,7 +1,6 @@
-use thiserror::Error;
-use tungstenite::error;
+use crate::exchanges::binance::BinanceError;
 
-#[derive(Error, Debug)]
+#[derive(thiserror::Error, Debug)]
 pub enum OrderBookError {
     #[error("Reqwest error")]
     ReqwestError(#[from] reqwest::Error),
@@ -9,4 +8,8 @@ pub enum OrderBookError {
     TungsteniteError(#[from] tungstenite::Error),
     #[error("HTTP error")]
     HTTPError(String),
+    #[error("Serde json error")]
+    SerdeJsonError(#[from] serde_json::Error),
+    #[error("Binance error")]
+    BinanceError(#[from] BinanceError),
 }
