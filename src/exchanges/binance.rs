@@ -1,9 +1,12 @@
 use core::fmt;
 
+use crate::exchanges::Exchange;
+use crate::red_black_book::PriceLevelUpdate;
 use crate::{
     error::OrderBookError,
-    red_black_book::{Order, OrderBook},
+    red_black_book::{OrderBook, PriceLevel},
 };
+
 use async_trait::async_trait;
 use futures::{SinkExt, StreamExt};
 use reqwest::{Response, StatusCode};
@@ -17,7 +20,7 @@ use serde_with::DeserializeAs;
 use thiserror::Error;
 use tokio::{
     net::TcpStream,
-    sync::mpsc::{error::SendError, Receiver},
+    sync::mpsc::{error::SendError, Receiver, Sender},
     task::JoinHandle,
 };
 
@@ -28,7 +31,7 @@ use super::OrderBookService;
 
 const WS_BASE_ENDPOINT: &str = "wss://stream.binance.com:9443/ws/";
 const DEPTH_SNAPSHOT_BASE_ENDPOINT: &str = "https://api.binance.com/api/v3/depth?symbol=";
-const DEPTH_LIMIT: &str = "1000";
+const DEFAULT_DEPTH_LIMIT: &str = "10"; //TODO: 5000 should cover all per the binance docs
 
 const STREAM_BUFFER: usize = 5000;
 // Websocket Market Streams
@@ -62,9 +65,9 @@ pub struct OrderBookUpdate {
     #[serde(rename = "E")]
     event_time: usize,
     #[serde(rename = "U")]
-    first_update_id: u128,
+    first_update_id: u64, //NOTE: not positive what the largest order id from the exchange will possibly grow to, it can probably be covered by u32, but using u64 just to be safe
     #[serde(rename = "u")]
-    final_updated_id: u128,
+    final_updated_id: u64,
     #[serde(rename = "b", deserialize_with = "convert_array_items_to_f64")]
     bids: Vec<[f64; 2]>,
     #[serde(rename = "a", deserialize_with = "convert_array_items_to_f64")]
@@ -81,12 +84,80 @@ impl OrderBookService for Binance {
     async fn spawn_order_book_service(
         &self,
         ticker: &str,
-    ) -> Result<Receiver<Order>, OrderBookError> {
-        let (order_book_rx, stream_handle) = self.spawn_order_book_stream(ticker).await?;
+        price_level_tx: Sender<PriceLevelUpdate>,
+    ) -> Result<Vec<JoinHandle<Result<(), OrderBookError>>>, OrderBookError> {
+        let (mut order_book_rx, stream_handle) = self.spawn_order_book_stream(ticker).await?;
         let depth_snapshot = self.get_depth_snapshot(ticker).await?;
 
+        for bid in depth_snapshot.bids {
+            price_level_tx
+                .send(PriceLevelUpdate::Bid(PriceLevel::new(
+                    bid[0],
+                    bid[1],
+                    Exchange::Binance,
+                )))
+                .await
+                .expect("handle this error");
+        }
+
+        for ask in depth_snapshot.asks {
+            price_level_tx
+                .send(PriceLevelUpdate::Ask(PriceLevel::new(
+                    ask[0],
+                    ask[1],
+                    Exchange::Binance,
+                )))
+                .await
+                .expect("handle this error");
+        }
+
+        tokio::spawn(async move {
+            let mut last_update_id = depth_snapshot.last_update_id;
+
+            while let Some(order_book_update) = order_book_rx.recv().await {
+                if order_book_update.final_updated_id <= last_update_id {
+                    continue;
+                } else {
+                    //TODO: check if the order ids are correct
+
+                    if order_book_update.first_update_id <= last_update_id + 1
+                        && order_book_update.final_updated_id >= last_update_id + 1
+                    {
+                        for bid in order_book_update.bids.into_iter() {
+                            price_level_tx
+                                .send(PriceLevelUpdate::Bid(PriceLevel::new(
+                                    bid[0],
+                                    bid[1],
+                                    Exchange::Binance,
+                                )))
+                                .await
+                                .expect("handle this error");
+                        }
+
+                        for ask in order_book_update.asks.into_iter() {
+                            price_level_tx
+                                .send(PriceLevelUpdate::Ask(PriceLevel::new(
+                                    ask[0],
+                                    ask[1],
+                                    Exchange::Binance,
+                                )))
+                                .await
+                                .expect("handle this error");
+                        }
+                    } else {
+                        dbg!(last_update_id);
+                        dbg!(order_book_update.first_update_id);
+                        dbg!(order_book_update.final_updated_id);
+                        panic!("Handle this error")
+                    }
+
+                    last_update_id = order_book_update.final_updated_id;
+                }
+            }
+        });
+
         stream_handle.await.expect("TODO: remove this from here");
-        todo!("Implement this");
+        todo!("implement this");
     }
 }
 
@@ -136,7 +207,7 @@ impl Binance {
                     tungstenite::Message::Close(_) => {
                         dbg!("TODO: add logging for closing");
 
-                        //TODO: Do something here to reconnect
+                        //TODO: Do something here to reconnect logic
                         break;
                     }
 
@@ -158,7 +229,7 @@ impl Binance {
         ticker.retain(|c| !c.is_whitespace());
 
         let depth_snapshot_endpoint =
-            DEPTH_SNAPSHOT_BASE_ENDPOINT.to_owned() + &ticker + "&limit=" + DEPTH_LIMIT;
+            DEPTH_SNAPSHOT_BASE_ENDPOINT.to_owned() + &ticker + "&limit=" + DEFAULT_DEPTH_LIMIT;
 
         dbg!("getting here to depth", depth_snapshot_endpoint.clone());
 
@@ -217,12 +288,16 @@ pub enum BinanceError {
 
 #[cfg(test)]
 mod tests {
-    use crate::exchanges::{binance::Binance, OrderBookService};
+    use crate::{
+        exchanges::{binance::Binance, OrderBookService},
+        red_black_book::{PriceLevel, PriceLevelUpdate},
+    };
 
     #[tokio::test]
     async fn test_order_stream() {
+        let (tx, rx) = tokio::sync::mpsc::channel::<PriceLevelUpdate>(100);
         Binance::new()
-            .spawn_order_book_service("bnbbtc")
+            .spawn_order_book_service("bnbbtc", tx)
             .await
             .expect("handle this error");
     }

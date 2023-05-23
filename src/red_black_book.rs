@@ -5,8 +5,8 @@ use crate::exchanges::Exchange;
 pub struct OrderBook {
     ticker: String,
     exchanges: Vec<Exchange>,
-    bid_tree: Option<OrderNode>, //TODO: will prob need an arc mutex or rwlock or something
-    ask_tree: Option<OrderNode>,
+    bid_tree: Option<PriceLevelNode>, //TODO: will prob need an arc mutex or rwlock or something
+    ask_tree: Option<PriceLevelNode>,
 }
 
 impl OrderBook {
@@ -40,19 +40,35 @@ impl OrderBook {
     //Then you can update the corresponding tx rx depending on the orderbook that is spawned
 }
 
-pub struct Order {
-    id: String,
-    exchange: Exchange,
-    price: f64,
-    volume: f64,
+#[derive(Debug)]
+pub struct PriceLevel {
+    pub price: f64,
+    pub volume: f64,
+    pub exchange: Exchange,
 }
 
-struct OrderNode {
+impl PriceLevel {
+    pub fn new(price: f64, volume: f64, exchange: Exchange) -> Self {
+        PriceLevel {
+            price,
+            volume,
+            exchange,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum PriceLevelUpdate {
+    Bid(PriceLevel),
+    Ask(PriceLevel),
+}
+
+struct PriceLevelNode {
     color: Color, // Either Red or Black
-    order: Order,
-    left: Option<Box<OrderNode>>,
-    right: Option<Box<OrderNode>>,
-    parent: Option<Weak<OrderNode>>,
+    order: PriceLevel,
+    left: Option<Box<PriceLevelNode>>,
+    right: Option<Box<PriceLevelNode>>,
+    parent: Option<Weak<PriceLevelNode>>,
 }
 
 enum Color {
@@ -60,15 +76,15 @@ enum Color {
     Black,
 }
 
-impl OrderNode {
+impl PriceLevelNode {
     pub fn new(
         color: Color, // Either Red or Black
-        order: Order,
-        left: Option<Box<OrderNode>>,
-        right: Option<Box<OrderNode>>,
-        parent: Option<Weak<OrderNode>>,
+        order: PriceLevel,
+        left: Option<Box<PriceLevelNode>>,
+        right: Option<Box<PriceLevelNode>>,
+        parent: Option<Weak<PriceLevelNode>>,
     ) -> Self {
-        OrderNode {
+        PriceLevelNode {
             color,
             order,
             left,

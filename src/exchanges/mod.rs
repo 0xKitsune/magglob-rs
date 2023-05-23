@@ -1,10 +1,13 @@
 pub mod binance;
 
 use async_trait::async_trait;
-use tokio::sync::mpsc::Receiver;
+use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::task::JoinHandle;
 
-use crate::{error::OrderBookError, red_black_book::Order};
+use crate::red_black_book::PriceLevelUpdate;
+use crate::{error::OrderBookError, red_black_book::PriceLevel};
 
+#[derive(Debug)]
 pub enum Exchange {
     ByBit,
     Binance,
@@ -18,15 +21,6 @@ pub trait OrderBookService {
     async fn spawn_order_book_service(
         &self,
         ticker: &str,
-    ) -> Result<Receiver<Order>, OrderBookError>;
+        price_level_tx: Sender<PriceLevelUpdate>,
+    ) -> Result<Vec<JoinHandle<Result<(), OrderBookError>>>, OrderBookError>;
 }
-
-// #[async_trait]
-// pub trait MarketPriceStream {
-//     async fn spawn_order_book_stream(
-//         &self,
-//         ticker: &str,
-//     ) -> Result<Receiver<Order>, OrderBookError>;
-
-//     //TODO: maybe reconnect
-// }
