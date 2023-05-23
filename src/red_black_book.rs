@@ -4,6 +4,7 @@ use crate::exchanges::Exchange;
 
 pub struct OrderBook {
     ticker: String,
+    exchanges: Vec<Exchange>,
     bid_tree: Option<OrderNode>, //TODO: will prob need an arc mutex or rwlock or something
     ask_tree: Option<OrderNode>,
 }
@@ -12,6 +13,7 @@ impl OrderBook {
     pub fn new(ticker: &str, exchanges: Vec<Exchange>) -> Self {
         OrderBook {
             ticker: String::from(ticker),
+            exchanges,
             bid_tree: None,
             ask_tree: None,
         }
