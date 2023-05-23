@@ -108,15 +108,15 @@ impl OrderBookService for Binance {
     ) -> Result<Vec<JoinHandle<Result<(), OrderBookError>>>, OrderBookError> {
         //TODO: handle reconnects in an efficient and safe way
 
-        let (mut order_book_rx, mut last_update_id, stream_handle) =
-            self.spawn_order_book_stream(ticker).await?;
+        let (mut order_book_rx, stream_handle) = self.spawn_order_book_stream(ticker).await?;
 
+        let mut last_update_id = 0;
         let price_level_update_handle = tokio::spawn(async move {
             while let Some(order_book_update) = order_book_rx.recv().await {
-                //TODO: FIXME: we cant do this when adding the depth snapshot, maybe we can say the depth snapshot or the initial updated id is id -1 so that the depth snapshot is counted
                 if order_book_update.final_updated_id <= last_update_id {
                     continue;
                 } else {
+                    //TODO: make a note that the first update id will always be zero
                     if order_book_update.first_update_id <= last_update_id + 1
                         && order_book_update.final_updated_id >= last_update_id + 1
                     {
@@ -165,7 +165,6 @@ impl Binance {
     ) -> Result<
         (
             Receiver<OrderBookUpdate>,
-            u64,
             JoinHandle<Result<(), OrderBookError>>,
         ),
         OrderBookError,
@@ -173,17 +172,12 @@ impl Binance {
         let ticker = ticker.to_lowercase();
         let (tx, rx) = tokio::sync::mpsc::channel::<OrderBookUpdate>(STREAM_BUFFER);
 
-        let atomic_last_update_id = Arc::new(AtomicU64::new(0));
-        let last_update_id = atomic_last_update_id.clone();
         let stream_handle = tokio::spawn(async move {
             //Establish an infinite loop to handle a ws stream with reconnects
             loop {
                 let depth_snapshot: DepthSnapshot = Binance::get_depth_snapshot(&ticker).await?;
 
-                if last_update_id.load(Ordering::Relaxed) == 0 {
-                    last_update_id.store(depth_snapshot.last_update_id, Ordering::Relaxed);
-                }
-
+                //TODO: there might be a more efficient way to do this, we are making sure we are not missing any orders using redundant logic with this approach but it is prob a little slow
                 tx.send(OrderBookUpdate {
                     event_type: OrderBookEventType::DepthUpdate,
                     event_time: 0,
@@ -230,8 +224,7 @@ impl Binance {
             }
         });
 
-        let last_update_id = atomic_last_update_id.load(Ordering::Relaxed) - 1; //TODO:FIXME: give a detailed explantion as to why we are -1, so we dont skip our initial depth snapshot
-        Ok((rx, last_update_id, stream_handle))
+        Ok((rx, stream_handle))
     }
 
     pub async fn get_depth_snapshot(ticker: &str) -> Result<DepthSnapshot, OrderBookError> {
