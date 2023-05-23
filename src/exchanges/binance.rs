@@ -195,11 +195,11 @@ impl Binance {
         let stream_ticker = ticker.to_lowercase();
         let depth_snapshot_ticker = ticker.to_uppercase();
 
-        let (stream_tx, mut stream_rx) = tokio::sync::mpsc::channel::<Message>(STREAM_BUFFER);
+        let (ws_stream_tx, mut ws_stream_rx) = tokio::sync::mpsc::channel::<Message>(STREAM_BUFFER);
 
         //spawn a thread that handles the stream and buffers the results
         let stream_handle = tokio::spawn(async move {
-            let stream_tx = stream_tx.clone();
+            let ws_stream_tx = ws_stream_tx.clone();
             loop {
                 //Establish an infinite loop to handle a ws stream with reconnects
                 let order_book_endpoint = WS_BASE_ENDPOINT.to_owned() + &stream_ticker + "@depth";
@@ -208,7 +208,7 @@ impl Binance {
                     tokio_tungstenite::connect_async(order_book_endpoint).await?;
                 log::info!("Ws connection established");
 
-                stream_tx
+                ws_stream_tx
                     .send(Message::Binary(GET_DEPTH_SNAPSHOT))
                     .await
                     .map_err(BinanceError::from)?;
@@ -216,7 +216,10 @@ impl Binance {
                 while let Some(Ok(message)) = order_book_stream.next().await {
                     match message {
                         tungstenite::Message::Text(_) => {
-                            stream_tx.send(message).await.map_err(BinanceError::from)?;
+                            ws_stream_tx
+                                .send(message)
+                                .await
+                                .map_err(BinanceError::from)?;
                         }
 
                         tungstenite::Message::Ping(_) => {
@@ -241,7 +244,7 @@ impl Binance {
         let (order_book_update_tx, order_book_update_rx) =
             tokio::sync::mpsc::channel::<OrderBookUpdate>(STREAM_BUFFER);
         let order_book_update_handle = tokio::spawn(async move {
-            while let Some(message) = stream_rx.recv().await {
+            while let Some(message) = ws_stream_rx.recv().await {
                 match message {
                     tungstenite::Message::Text(message) => {
                         order_book_update_tx
@@ -251,6 +254,7 @@ impl Binance {
                     }
 
                     tungstenite::Message::Binary(message) => {
+                        //This is an internal message signaling that we should get the depth snapshot and send it through the channel
                         if message.is_empty() {
                             let depth_snapshot =
                                 Binance::get_depth_snapshot(&depth_snapshot_ticker).await?;
