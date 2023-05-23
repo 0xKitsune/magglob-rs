@@ -1,4 +1,4 @@
-use crate::exchanges::binance::BinanceError;
+use crate::{exchanges::binance::BinanceError, red_black_book::PriceLevelUpdate};
 
 #[derive(thiserror::Error, Debug)]
 pub enum OrderBookError {
@@ -12,4 +12,6 @@ pub enum OrderBookError {
     SerdeJsonError(#[from] serde_json::Error),
     #[error("Binance error")]
     BinanceError(#[from] BinanceError),
+    #[error("Error when sending price level update")]
+    PriceLevelUpdateSendError(#[from] tokio::sync::mpsc::error::SendError<PriceLevelUpdate>),
 }

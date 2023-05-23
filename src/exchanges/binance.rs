@@ -9,15 +9,12 @@ use crate::{
 
 use async_trait::async_trait;
 use futures::{SinkExt, StreamExt};
-use reqwest::{Response, StatusCode};
 use serde::{
     de::{self, SeqAccess, Visitor},
     Deserializer,
 };
 use serde_derive::Deserialize;
-use serde_with::serde_as;
-use serde_with::DeserializeAs;
-use thiserror::Error;
+
 use tokio::{
     net::TcpStream,
     sync::mpsc::{error::SendError, Receiver, Sender},
@@ -61,17 +58,17 @@ pub struct DepthSnapshot {
 #[derive(Deserialize, Debug)]
 pub struct OrderBookUpdate {
     #[serde(rename = "e")]
-    event_type: OrderBookEventType,
+    pub event_type: OrderBookEventType,
     #[serde(rename = "E")]
-    event_time: usize,
+    pub event_time: usize,
     #[serde(rename = "U")]
-    first_update_id: u64, //NOTE: not positive what the largest order id from the exchange will possibly grow to, it can probably be covered by u32, but using u64 just to be safe
+    pub first_update_id: u64, //NOTE: not positive what the largest order id from the exchange will possibly grow to, it can probably be covered by u32, but using u64 just to be safe
     #[serde(rename = "u")]
-    final_updated_id: u64,
+    pub final_updated_id: u64,
     #[serde(rename = "b", deserialize_with = "convert_array_items_to_f64")]
-    bids: Vec<[f64; 2]>,
+    pub bids: Vec<[f64; 2]>,
     #[serde(rename = "a", deserialize_with = "convert_array_items_to_f64")]
-    asks: Vec<[f64; 2]>,
+    pub asks: Vec<[f64; 2]>,
 }
 #[derive(Deserialize, Debug)]
 pub enum OrderBookEventType {
@@ -96,8 +93,7 @@ impl OrderBookService for Binance {
                     bid[1],
                     Exchange::Binance,
                 )))
-                .await
-                .expect("handle this error");
+                .await?;
         }
 
         for ask in depth_snapshot.asks {
@@ -107,19 +103,16 @@ impl OrderBookService for Binance {
                     ask[1],
                     Exchange::Binance,
                 )))
-                .await
-                .expect("handle this error");
+                .await?;
         }
 
-        tokio::spawn(async move {
+        let price_level_update_handle = tokio::spawn(async move {
             let mut last_update_id = depth_snapshot.last_update_id;
 
             while let Some(order_book_update) = order_book_rx.recv().await {
                 if order_book_update.final_updated_id <= last_update_id {
                     continue;
                 } else {
-                    //TODO: check if the order ids are correct
-
                     if order_book_update.first_update_id <= last_update_id + 1
                         && order_book_update.final_updated_id >= last_update_id + 1
                     {
@@ -130,8 +123,7 @@ impl OrderBookService for Binance {
                                     bid[1],
                                     Exchange::Binance,
                                 )))
-                                .await
-                                .expect("handle this error");
+                                .await?;
                         }
 
                         for ask in order_book_update.asks.into_iter() {
@@ -141,23 +133,20 @@ impl OrderBookService for Binance {
                                     ask[1],
                                     Exchange::Binance,
                                 )))
-                                .await
-                                .expect("handle this error");
+                                .await?;
                         }
                     } else {
-                        dbg!(last_update_id);
-                        dbg!(order_book_update.first_update_id);
-                        dbg!(order_book_update.final_updated_id);
-                        panic!("Handle this error")
+                        return Err(BinanceError::InvalidUpdateId.into());
                     }
 
                     last_update_id = order_book_update.final_updated_id;
                 }
             }
+
+            Ok::<(), OrderBookError>(())
         });
 
-        stream_handle.await.expect("TODO: remove this from here");
-        todo!("implement this");
+        Ok(vec![stream_handle, price_level_update_handle])
     }
 }
 
@@ -284,6 +273,8 @@ where
 pub enum BinanceError {
     #[error("Order book update send error")]
     OrderBookUpdateSendError(#[from] SendError<OrderBookUpdate>),
+    #[error("Invalid update id")]
+    InvalidUpdateId,
 }
 
 #[cfg(test)]
@@ -296,9 +287,13 @@ mod tests {
     #[tokio::test]
     async fn test_order_stream() {
         let (tx, rx) = tokio::sync::mpsc::channel::<PriceLevelUpdate>(100);
-        Binance::new()
+        let binance_handles = Binance::new()
             .spawn_order_book_service("bnbbtc", tx)
             .await
             .expect("handle this error");
+
+        for handle in binance_handles {
+            handle.await.expect("Waiting").expect("waiting");
+        }
     }
 }
