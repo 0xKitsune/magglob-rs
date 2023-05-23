@@ -1,4 +1,4 @@
-mod binance;
+pub mod binance;
 
 use async_trait::async_trait;
 use tokio::sync::mpsc::Receiver;
@@ -15,10 +15,7 @@ pub enum Exchange {
 
 #[async_trait]
 pub trait OrderBookStream {
-    async fn spawn_order_book_stream(
-        &self,
-        ticker: &str,
-    ) -> Result<Receiver<Order>, OrderBookError>;
+    async fn spawn_order_book_stream(ticker: &str) -> Result<Receiver<Order>, OrderBookError>;
 }
 
 // #[async_trait]

@@ -12,8 +12,10 @@ log4rs = "1.2.0"
 thiserror = "1.0.36"
 criterion = {version = "0.4.0", features = ["async_tokio"]}
 tokio = { version = "1.28.1", features = ["full"] }
-reqwest = "0.11.18"
+reqwest = { version = "0.11.18", features = [ "json"] }
 serde_json = "1.0.96"
-tungstenite = "0.19.0"
-tokio-tungstenite = "0.19.0"
+tungstenite = { version = "0.19.0", features = ["rustls-tls-native-roots"] }
+tokio-tungstenite = { version = "0.19.0", features = ["rustls-tls-native-roots"] }
 futures = "0.3.28"
+serde_derive = "1.0.163"
+serde = "1.0.163"
