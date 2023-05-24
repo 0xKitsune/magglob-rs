@@ -4,18 +4,10 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-use async_trait::async_trait;
 use ordered_float::{Float, OrderedFloat};
 use tokio::task::JoinHandle;
 
 use crate::{error::OrderBookError, exchanges::Exchange};
-
-#[async_trait]
-pub trait PriceLevelTree: Send + Sync {
-    fn new() -> Self;
-    fn insert(&self, price: f64, price_level: PriceLevel) -> Result<(), OrderBookError>;
-    fn remove(&self, price: f64) -> Result<(), OrderBookError>;
-}
 
 pub struct AggBook<B: OrderBook + 'static> {
     pub pair: [String; 2],
