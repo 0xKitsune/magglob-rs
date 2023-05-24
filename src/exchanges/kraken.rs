@@ -142,19 +142,18 @@ impl OrderBookService for Kraken {
 #[derive(Deserialize, Debug)]
 pub struct OrderBookSnapshot {
     #[serde(rename = "bs", deserialize_with = "convert_array_items_to_f64")]
-    pub bids: Vec<[f64; 3]>,
+    pub bids: Option<Vec<[f64; 3]>>,
     #[serde(rename = "as", deserialize_with = "convert_array_items_to_f64")]
-    pub asks: Vec<[f64; 3]>,
+    pub asks: Option<Vec<[f64; 3]>>,
 }
 
 #[derive(Deserialize, Debug)]
 pub struct OrderBookUpdate {
-    #[serde(rename = "b", deserialize_with = "convert_array_items_to_f64")]
-    pub bids: Vec<[f64; 3]>,
-    #[serde(rename = "a", deserialize_with = "convert_array_items_to_f64")]
-    pub asks: Vec<[f64; 3]>,
+    #[serde(rename = "b", deserialize_with = "convert_array_items_to_f64", default)]
+    pub bids: Option<Vec<[f64; 3]>>,
+    #[serde(rename = "a", deserialize_with = "convert_array_items_to_f64", default)]
+    pub asks: Option<Vec<[f64; 3]>>,
 }
-
 impl Kraken {
     pub fn new() -> Self {
         Kraken {}
@@ -228,38 +227,11 @@ impl Kraken {
                         let val: Value = serde_json::from_str(&message)?;
 
                         if let Some(arr) = val.as_array() {
-                            if let Some(map) = arr[1].as_object() {
-                                if map.contains_key("a") && map.contains_key("b") {
-                                    dbg!("here", &map);
+                            if let Some(inner_val) = arr.get(1) {
+                                let x: OrderBookUpdate =
+                                    serde_json::from_value(inner_val.clone()).expect("error");
 
-                                    let map_value = Value::Object(map.clone());
-
-                                    order_book_update_tx
-                                        .send(
-                                            serde_json::from_value(map_value)
-                                                .map_err(KrakenError::SerdeJsonError)?,
-                                        )
-                                        .await
-                                        .map_err(KrakenError::OrderBookUpdateSendError)?;
-                                } else if let Some(val) = map.get("a") {
-                                    order_book_update_tx
-                                        .send(OrderBookUpdate {
-                                            bids: vec![],
-                                            asks: convert_array_items_to_f64(val.clone())?,
-                                        })
-                                        .await
-                                        .map_err(KrakenError::from)?;
-
-                                    convert_array_items_to_f64(val.clone())?;
-                                } else if let Some(val) = map.get("b") {
-                                    order_book_update_tx
-                                        .send(OrderBookUpdate {
-                                            bids: convert_array_items_to_f64(val.clone())?,
-                                            asks: vec![],
-                                        })
-                                        .await
-                                        .map_err(KrakenError::from)?;
-                                }
+                                dbg!(x);
                             }
                         }
 
@@ -309,7 +281,7 @@ pub enum KrakenError {
 struct StringF64ArrayVisitor;
 
 impl<'a> Visitor<'a> for StringF64ArrayVisitor {
-    type Value = Vec<[f64; 3]>;
+    type Value = Option<Vec<[f64; 3]>>;
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         formatter.write_str("a vector of two-element arrays of strings representing floats")
@@ -320,19 +292,26 @@ impl<'a> Visitor<'a> for StringF64ArrayVisitor {
         A: SeqAccess<'a>,
     {
         let mut vec = vec![];
+        let mut is_empty = true;
+
+        //TODO: FIXME: going to have to make two of these, one for snapshots, one for updates
+
+        fix this ^^
 
         while let Some(arr) = seq.next_element::<[String; 3]>()? {
+            is_empty = false; // Data is present
+
             let first: f64 = arr[0].parse().map_err(de::Error::custom)?;
             let second: f64 = arr[1].parse().map_err(de::Error::custom)?;
             let third: f64 = arr[2].parse().map_err(de::Error::custom)?;
             vec.push([first, second, third]);
         }
 
-        Ok(vec)
+        Ok(if is_empty { None } else { Some(vec) })
     }
 }
 
-pub fn convert_array_items_to_f64<'a, D>(deserializer: D) -> Result<Vec<[f64; 3]>, D::Error>
+pub fn convert_array_items_to_f64<'a, D>(deserializer: D) -> Result<Option<Vec<[f64; 3]>>, D::Error>
 where
     D: Deserializer<'a>,
 {
