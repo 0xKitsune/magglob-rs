@@ -14,4 +14,6 @@ pub enum OrderBookError {
     BinanceError(#[from] BinanceError),
     #[error("Error when sending price level update")]
     PriceLevelUpdateSendError(#[from] tokio::sync::mpsc::error::SendError<PriceLevelUpdate>),
+    #[error("Poisoned lock on BTreeMap")]
+    PoisonedLockOnBTreeMap,
 }

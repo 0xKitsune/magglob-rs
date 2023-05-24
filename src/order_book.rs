@@ -4,7 +4,6 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-use intrusive_collections::rbtree;
 use ordered_float::{Float, OrderedFloat};
 use tokio::task::JoinHandle;
 
@@ -70,13 +69,13 @@ impl OrderBook {
                         if price_level.quantity == 0.0 {
                             bid_tree
                                 .write()
-                                .expect("TODO: handle this error")
+                                .map_err(|_| OrderBookError::PoisonedLockOnBTreeMap)?
                                 .remove(&OrderedFloat(price_level.price));
                         } else {
                             //Insert/update tree
                             bid_tree
                                 .write()
-                                .expect("TODO: handle this error")
+                                .map_err(|_| OrderBookError::PoisonedLockOnBTreeMap)?
                                 .insert(OrderedFloat(price_level.price), price_level);
                         }
                     }
@@ -84,13 +83,13 @@ impl OrderBook {
                         if price_level.quantity == 0.0 {
                             ask_tree
                                 .write()
-                                .expect("TODO: handle this error")
+                                .map_err(|_| OrderBookError::PoisonedLockOnBTreeMap)?
                                 .remove(&OrderedFloat(price_level.price));
                         } else {
                             //Insert/update tree
                             ask_tree
                                 .write()
-                                .expect("TODO: handle this error")
+                                .map_err(|_| OrderBookError::PoisonedLockOnBTreeMap)?
                                 .insert(OrderedFloat(price_level.price), price_level);
                         }
                     }
