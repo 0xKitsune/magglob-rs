@@ -1,5 +1,5 @@
 [package]
-name = "rb-book"
+name = "btreemap-book" #TODO: maybe change this name
 version = "0.1.0"
 edition = "2021"
 

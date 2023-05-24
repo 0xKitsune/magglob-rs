@@ -22,6 +22,7 @@ pub enum Exchange {
 pub trait OrderBookService {
     async fn spawn_order_book_service(
         ticker: &str,
+        order_book_depth: usize,
         price_level_tx: Sender<PriceLevelUpdate>,
     ) -> Result<Vec<JoinHandle<Result<(), OrderBookError>>>, OrderBookError>;
 }
@@ -30,11 +31,15 @@ impl Exchange {
     pub async fn spawn_order_book_service(
         &self,
         ticker: &str,
+        order_book_depth: usize,
         price_level_tx: Sender<PriceLevelUpdate>,
     ) -> Result<Vec<JoinHandle<Result<(), OrderBookError>>>, OrderBookError> {
         match self {
             Exchange::Binance => {
-                Ok(Binance::spawn_order_book_service(ticker, price_level_tx).await?)
+                Ok(
+                    Binance::spawn_order_book_service(ticker, order_book_depth, price_level_tx)
+                        .await?,
+                )
             }
         }
     }

@@ -16,4 +16,6 @@ pub enum OrderBookError {
     PriceLevelUpdateSendError(#[from] tokio::sync::mpsc::error::SendError<PriceLevelUpdate>),
     #[error("Poisoned lock on BTreeMap")]
     PoisonedLockOnBTreeMap,
+    #[error("Error when converting to Utf8 from string")]
+    FromUtf8Error(#[from] std::string::FromUtf8Error),
 }

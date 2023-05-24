@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use crate::exchanges::Exchange;
-use crate::order_book::PriceLevelUpdate;
+use crate::order_book::{self, PriceLevelUpdate};
 use crate::{
     error::OrderBookError,
     order_book::{OrderBook, PriceLevel},
@@ -31,9 +31,8 @@ use super::OrderBookService;
 
 const WS_BASE_ENDPOINT: &str = "wss://stream.binance.com:9443/ws/";
 const DEPTH_SNAPSHOT_BASE_ENDPOINT: &str = "https://api.binance.com/api/v3/depth?symbol=";
-const DEFAULT_DEPTH_LIMIT: &str = "1000";
-const STREAM_BUFFER: usize = 5000; //TODO: 5000 should cover all per the binance docs
 
+const STREAM_BUFFER: usize = 1000;
 //Add a comment for what this is
 const GET_DEPTH_SNAPSHOT: Vec<u8> = vec![];
 
@@ -107,11 +106,13 @@ pub enum OrderBookEventType {
 impl OrderBookService for Binance {
     async fn spawn_order_book_service(
         ticker: &str,
+        order_book_depth: usize,
         price_level_tx: Sender<PriceLevelUpdate>,
     ) -> Result<Vec<JoinHandle<Result<(), OrderBookError>>>, OrderBookError> {
         //TODO: handle reconnects in an efficient and safe way
 
-        let (mut order_book_rx, stream_handles) = spawn_order_book_stream(ticker).await?;
+        let (mut order_book_rx, stream_handles) =
+            spawn_order_book_stream(ticker, order_book_depth).await?;
 
         let mut last_update_id = 0;
         let price_level_update_handle = tokio::spawn(async move {
@@ -169,6 +170,7 @@ impl Binance {
 
 async fn spawn_order_book_stream(
     ticker: &str,
+    order_book_depth: usize,
 ) -> Result<
     (
         Receiver<OrderBookUpdate>,
@@ -240,7 +242,8 @@ async fn spawn_order_book_stream(
                 tungstenite::Message::Binary(message) => {
                     //This is an internal message signaling that we should get the depth snapshot and send it through the channel
                     if message.is_empty() {
-                        let depth_snapshot = get_depth_snapshot(&depth_snapshot_ticker).await?;
+                        let depth_snapshot =
+                            get_depth_snapshot(&depth_snapshot_ticker, order_book_depth).await?;
 
                         //TODO: there might be a more efficient way to do this, we are making sure we are not missing any orders using redundant logic with this approach but it is prob a little slow
                         order_book_update_tx
@@ -270,9 +273,14 @@ async fn spawn_order_book_stream(
     ))
 }
 
-async fn get_depth_snapshot(ticker: &str) -> Result<DepthSnapshot, OrderBookError> {
-    let depth_snapshot_endpoint =
-        DEPTH_SNAPSHOT_BASE_ENDPOINT.to_owned() + &ticker + "&limit=" + DEFAULT_DEPTH_LIMIT;
+async fn get_depth_snapshot(
+    ticker: &str,
+    order_book_depth: usize,
+) -> Result<DepthSnapshot, OrderBookError> {
+    let depth_snapshot_endpoint = DEPTH_SNAPSHOT_BASE_ENDPOINT.to_owned()
+        + &ticker
+        + "&limit="
+        + order_book_depth.to_string().as_str();
 
     // Get the depth snapshot
     let depth_response = reqwest::get(depth_snapshot_endpoint).await?;
@@ -280,10 +288,9 @@ async fn get_depth_snapshot(ticker: &str) -> Result<DepthSnapshot, OrderBookErro
     if depth_response.status().is_success() {
         Ok(depth_response.json::<DepthSnapshot>().await?)
     } else {
-        Err(OrderBookError::HTTPError(
-            String::from_utf8(depth_response.bytes().await?.to_vec())
-                .expect("TODO: handle this error"),
-        ))
+        Err(OrderBookError::HTTPError(String::from_utf8(
+            depth_response.bytes().await?.to_vec(),
+        )?))
     }
 }
 
@@ -340,7 +347,7 @@ mod tests {
     #[tokio::test]
     async fn test_order_stream() {
         let (tx, mut rx) = tokio::sync::mpsc::channel::<PriceLevelUpdate>(5000);
-        let binance_handles = Binance::spawn_order_book_service("bnbbtc", tx)
+        let binance_handles = Binance::spawn_order_book_service("bnbbtc", 5000, tx)
             .await
             .expect("handle this error");
 
