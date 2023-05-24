@@ -9,7 +9,7 @@ use tokio::task::JoinHandle;
 
 use crate::{error::OrderBookError, exchanges::Exchange};
 
-pub struct AggBook<B: OrderBook + 'static> {
+pub struct AggregatedOrderBook<B: OrderBook + 'static> {
     pub pair: [String; 2],
     pub exchanges: Vec<Exchange>,
     pub order_book: Arc<B>,
@@ -19,12 +19,12 @@ pub trait OrderBook: Send + Sync {
     fn update_book(&self, price_level_update: PriceLevelUpdate) -> Result<(), OrderBookError>;
 }
 
-impl<B> AggBook<B>
+impl<B> AggregatedOrderBook<B>
 where
     B: OrderBook,
 {
     pub fn new(pair: [&str; 2], exchanges: Vec<Exchange>, order_book: Arc<B>) -> Self {
-        AggBook {
+        AggregatedOrderBook {
             pair: [pair[0].to_string(), pair[1].to_string()],
             exchanges,
             order_book,
@@ -150,7 +150,7 @@ mod tests {
 
     use crate::{
         exchanges::{binance::Binance, Exchange, OrderBookService},
-        order_book::AggBook,
+        order_book::AggregatedOrderBook,
         order_book::{PriceLevel, PriceLevelUpdate},
     };
 
