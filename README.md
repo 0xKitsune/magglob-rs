@@ -8,8 +8,8 @@ Modular aggregated limit order book
 | Binance | ✅||
 | Kraken  | 🏗️||
 | Coinbase  | 🏗️||
-| Coinbase  | 🏗️||
 | Crypto.com  | 🏗️||
+| Bybit  | 🏗️||
 
 
 ## In Progress
