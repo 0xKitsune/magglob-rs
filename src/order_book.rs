@@ -9,11 +9,12 @@ use tokio::task::JoinHandle;
 
 use crate::{error::OrderBookError, exchanges::Exchange};
 
+type PriceLevelTree = RwLock<BTreeMap<OrderedFloat<f64>, PriceLevel>>;
 pub struct OrderBook {
     pub ticker: String,
     pub exchanges: Vec<Exchange>,
-    pub bid_tree: Arc<RwLock<BTreeMap<OrderedFloat<f64>, PriceLevel>>>,
-    pub ask_tree: Arc<RwLock<BTreeMap<OrderedFloat<f64>, PriceLevel>>>,
+    pub bid_tree: Arc<PriceLevelTree>,
+    pub ask_tree: Arc<PriceLevelTree>,
 }
 
 impl OrderBook {
@@ -55,36 +56,7 @@ impl OrderBook {
 
         handles.push(tokio::spawn(async move {
             while let Some(price_level_update) = price_level_rx.recv().await {
-                match price_level_update {
-                    PriceLevelUpdate::Bid(price_level) => {
-                        if price_level.quantity == 0.0 {
-                            bid_tree
-                                .write()
-                                .map_err(|_| OrderBookError::PoisonedLockOnBTreeMap)?
-                                .remove(&OrderedFloat(price_level.price));
-                        } else {
-                            //Insert/update tree
-                            bid_tree
-                                .write()
-                                .map_err(|_| OrderBookError::PoisonedLockOnBTreeMap)?
-                                .insert(OrderedFloat(price_level.price), price_level);
-                        }
-                    }
-                    PriceLevelUpdate::Ask(price_level) => {
-                        if price_level.quantity == 0.0 {
-                            ask_tree
-                                .write()
-                                .map_err(|_| OrderBookError::PoisonedLockOnBTreeMap)?
-                                .remove(&OrderedFloat(price_level.price));
-                        } else {
-                            //Insert/update tree
-                            ask_tree
-                                .write()
-                                .map_err(|_| OrderBookError::PoisonedLockOnBTreeMap)?
-                                .insert(OrderedFloat(price_level.price), price_level);
-                        }
-                    }
-                }
+                update_bid_ask_trees(bid_tree.clone(), &ask_tree, price_level_update)?;
             }
 
             Ok::<(), OrderBookError>(())
@@ -129,38 +101,9 @@ impl OrderBook {
         let ask_tree = self.ask_tree.clone();
 
         handles.push(tokio::spawn(async move {
+            //TODO: keep track of the bid ask spread
             while let Some(price_level_update) = price_level_rx.recv().await {
-                match price_level_update {
-                    PriceLevelUpdate::Bid(price_level) => {
-                        if price_level.quantity == 0.0 {
-                            bid_tree
-                                .write()
-                                .map_err(|_| OrderBookError::PoisonedLockOnBTreeMap)?
-                                .remove(&OrderedFloat(price_level.price));
-                        } else {
-                            //Insert/update tree
-                            bid_tree
-                                .write()
-                                .map_err(|_| OrderBookError::PoisonedLockOnBTreeMap)?
-                                .insert(OrderedFloat(price_level.price), price_level);
-                        }
-                    }
-                    PriceLevelUpdate::Ask(price_level) => {
-                        if price_level.quantity == 0.0 {
-                            ask_tree
-                                .write()
-                                .map_err(|_| OrderBookError::PoisonedLockOnBTreeMap)?
-                                .remove(&OrderedFloat(price_level.price));
-                        } else {
-                            //Insert/update tree
-                            ask_tree
-                                .write()
-                                .map_err(|_| OrderBookError::PoisonedLockOnBTreeMap)?
-                                .insert(OrderedFloat(price_level.price), price_level);
-                            dbg!("updating ask price level");
-                        }
-                    }
-                }
+                update_bid_ask_trees(&bid_tree, &ask_tree, price_level_update)?;
             }
 
             Ok::<(), OrderBookError>(())
@@ -172,6 +115,45 @@ impl OrderBook {
     //TODO: basically spawn a service that will listen to updates from all of the exchanges, and send an update through a channel when the orderbook has updated
     //This service will spawn a thread for each exchange that it needs to listen to and then send the update through a channel where the order book will be updated here
     //Then you can update the corresponding tx rx depending on the orderbook that is spawned
+}
+
+#[inline(always)]
+fn update_bid_ask_trees(
+    bid_tree: &PriceLevelTree,
+    ask_tree: &PriceLevelTree,
+    price_level_update: PriceLevelUpdate,
+) -> Result<(), OrderBookError> {
+    match price_level_update {
+        PriceLevelUpdate::Bid(price_level) => {
+            if price_level.quantity == 0.0 {
+                bid_tree
+                    .write()
+                    .map_err(|_| OrderBookError::PoisonedLockOnBTreeMap)?
+                    .remove(&OrderedFloat(price_level.price));
+            } else {
+                //Insert/update tree
+                bid_tree
+                    .write()
+                    .map_err(|_| OrderBookError::PoisonedLockOnBTreeMap)?
+                    .insert(OrderedFloat(price_level.price), price_level);
+            }
+        }
+        PriceLevelUpdate::Ask(price_level) => {
+            if price_level.quantity == 0.0 {
+                ask_tree
+                    .write()
+                    .map_err(|_| OrderBookError::PoisonedLockOnBTreeMap)?
+                    .remove(&OrderedFloat(price_level.price));
+            } else {
+                //Insert/update tree
+                ask_tree
+                    .write()
+                    .map_err(|_| OrderBookError::PoisonedLockOnBTreeMap)?
+                    .insert(OrderedFloat(price_level.price), price_level);
+            }
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug)]
