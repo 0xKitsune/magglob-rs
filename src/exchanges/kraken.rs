@@ -29,90 +29,24 @@ use tungstenite::{protocol::WebSocketConfig, Message};
 
 use super::OrderBookService;
 
-const WS_BASE_ENDPOINT: &str = "wss://stream.binance.com:9443/ws/";
-const DEPTH_SNAPSHOT_BASE_ENDPOINT: &str = "https://api.binance.com/api/v3/depth?symbol=";
-
+const WS_ENDPOINT: &str = "wss://ws.kraken.com";
 const STREAM_BUFFER: usize = 1000;
 //Add a comment for what this is
 const GET_DEPTH_SNAPSHOT: Vec<u8> = vec![];
 
-// Websocket Market Streams
-
-// The base endpoint is: wss://stream.binance.com:9443 or wss://stream.binance.com:443
-// Streams can be accessed either in a single raw stream or in a combined stream.
-// Users can listen to multiple streams.
-// Raw streams are accessed at /ws/<streamName>
-// Combined streams are accessed at /stream?streams=<streamName1>/<streamName2>/<streamName3>
-// Combined stream events are wrapped as follows: {"stream":"<streamName>","data":<rawPayload>}
-// All symbols for streams are lowercase
-// A single connection to stream.binance.com is only valid for 24 hours; expect to be disconnected at the 24 hour mark
-// The websocket server will send a ping frame every 3 minutes. If the websocket server does not receive a pong frame back from the connection within a 10 minute period, the connection will be disconnected. Unsolicited pong frames are allowed.
-// The base endpoint wss://data-stream.binance.com can be subscribed to receive market data messages. Users data stream is NOT available from this URL.
-pub struct Binance {}
-
-#[derive(Debug, Deserialize)]
-pub struct DepthSnapshot {
-    #[serde(rename = "lastUpdateId")]
-    last_update_id: u64,
-    #[serde(deserialize_with = "convert_array_items_to_f64")]
-    bids: Vec<[f64; 2]>,
-    #[serde(deserialize_with = "convert_array_items_to_f64")]
-    asks: Vec<[f64; 2]>,
-}
-
-#[derive(Deserialize, Debug)]
-pub struct OrderBookUpdate {
-    #[serde(rename = "e")]
-    pub event_type: OrderBookEventType,
-    #[serde(rename = "E")]
-    pub event_time: usize,
-    #[serde(rename = "U")]
-    pub first_update_id: u64, //NOTE: not positive what the largest order id from the exchange will possibly grow to, it can probably be covered by u32, but using u64 just to be safe
-    #[serde(rename = "u")]
-    pub final_updated_id: u64,
-    #[serde(rename = "b", deserialize_with = "convert_array_items_to_f64")]
-    pub bids: Vec<[f64; 2]>,
-    #[serde(rename = "a", deserialize_with = "convert_array_items_to_f64")]
-    pub asks: Vec<[f64; 2]>,
-}
-
-impl OrderBookUpdate {
-    pub fn new(
-        event_type: OrderBookEventType,
-        event_time: usize,
-        first_update_id: u64,
-        final_updated_id: u64,
-        bids: Vec<[f64; 2]>,
-        asks: Vec<[f64; 2]>,
-    ) -> Self {
-        OrderBookUpdate {
-            event_type,
-            event_time,
-            first_update_id,
-            final_updated_id,
-            bids,
-            asks,
-        }
-    }
-}
-
-#[derive(Deserialize, Debug)]
-pub enum OrderBookEventType {
-    #[serde(rename = "depthUpdate")]
-    DepthUpdate,
-}
+pub struct Kraken {}
 
 #[async_trait]
-impl OrderBookService for Binance {
+impl OrderBookService for Kraken {
     async fn spawn_order_book_service(
-        pair: [&str; 2],
+        ticker: &str,
         order_book_depth: usize,
         price_level_tx: Sender<PriceLevelUpdate>,
     ) -> Result<Vec<JoinHandle<Result<(), OrderBookError>>>, OrderBookError> {
         //TODO: handle reconnects in an efficient and safe way
 
         let (mut order_book_rx, stream_handles) =
-            spawn_order_book_stream(pair, order_book_depth).await?;
+            spawn_order_book_stream(ticker, order_book_depth).await?;
 
         let mut last_update_id = 0;
         let price_level_update_handle = tokio::spawn(async move {
@@ -169,7 +103,7 @@ impl Binance {
 }
 
 async fn spawn_order_book_stream(
-    pair: [&str; 2],
+    ticker: &str,
     order_book_depth: usize,
 ) -> Result<
     (
@@ -178,9 +112,8 @@ async fn spawn_order_book_stream(
     ),
     OrderBookError,
 > {
-    let pair = pair.join("");
-    let stream_pair = pair.to_lowercase();
-    let depth_snapshot_pair = pair.to_uppercase();
+    let stream_ticker = ticker.to_lowercase();
+    let depth_snapshot_ticker = ticker.to_uppercase();
 
     let (ws_stream_tx, mut ws_stream_rx) = tokio::sync::mpsc::channel::<Message>(STREAM_BUFFER);
 
@@ -189,7 +122,7 @@ async fn spawn_order_book_stream(
         let ws_stream_tx = ws_stream_tx.clone();
         loop {
             //Establish an infinite loop to handle a ws stream with reconnects
-            let order_book_endpoint = WS_BASE_ENDPOINT.to_owned() + &stream_pair + "@depth";
+            let order_book_endpoint = WS_ENDPOINT.to_owned() + &stream_ticker + "@depth";
 
             let (mut order_book_stream, _) =
                 tokio_tungstenite::connect_async(order_book_endpoint).await?;
@@ -244,7 +177,7 @@ async fn spawn_order_book_stream(
                     //This is an internal message signaling that we should get the depth snapshot and send it through the channel
                     if message.is_empty() {
                         let depth_snapshot =
-                            get_depth_snapshot(&depth_snapshot_pair, order_book_depth).await?;
+                            get_depth_snapshot(&depth_snapshot_ticker, order_book_depth).await?;
 
                         //TODO: there might be a more efficient way to do this, we are making sure we are not missing any orders using redundant logic with this approach but it is prob a little slow
                         order_book_update_tx
@@ -348,7 +281,7 @@ mod tests {
     #[tokio::test]
     async fn test_order_stream() {
         let (tx, mut rx) = tokio::sync::mpsc::channel::<PriceLevelUpdate>(5000);
-        let binance_handles = Binance::spawn_order_book_service(["bnb", "btc"], 5000, tx)
+        let binance_handles = Binance::spawn_order_book_service("bnbbtc", 5000, tx)
             .await
             .expect("handle this error");
 

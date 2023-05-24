@@ -1,4 +1,5 @@
 pub mod binance;
+pub mod kraken;
 
 use async_trait::async_trait;
 use tokio::sync::mpsc::{Receiver, Sender};
@@ -21,7 +22,7 @@ pub enum Exchange {
 #[async_trait]
 pub trait OrderBookService {
     async fn spawn_order_book_service(
-        ticker: &str,
+        pair: [&str; 2],
         order_book_depth: usize,
         price_level_tx: Sender<PriceLevelUpdate>,
     ) -> Result<Vec<JoinHandle<Result<(), OrderBookError>>>, OrderBookError>;
@@ -30,14 +31,14 @@ pub trait OrderBookService {
 impl Exchange {
     pub async fn spawn_order_book_service(
         &self,
-        ticker: &str,
+        pair: [&str; 2],
         order_book_depth: usize,
         price_level_tx: Sender<PriceLevelUpdate>,
     ) -> Result<Vec<JoinHandle<Result<(), OrderBookError>>>, OrderBookError> {
         match self {
             Exchange::Binance => {
                 Ok(
-                    Binance::spawn_order_book_service(ticker, order_book_depth, price_level_tx)
+                    Binance::spawn_order_book_service(pair, order_book_depth, price_level_tx)
                         .await?,
                 )
             }

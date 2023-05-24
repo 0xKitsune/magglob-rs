@@ -1,29 +1,43 @@
+pub mod btree_map;
+
 use std::{
     collections::BTreeMap,
     rc::Weak,
     sync::{Arc, RwLock},
 };
 
+use async_trait::async_trait;
 use ordered_float::{Float, OrderedFloat};
 use tokio::task::JoinHandle;
 
 use crate::{error::OrderBookError, exchanges::Exchange};
 
-type PriceLevelTree = RwLock<BTreeMap<OrderedFloat<f64>, PriceLevel>>;
-pub struct OrderBook {
-    pub ticker: String,
-    pub exchanges: Vec<Exchange>,
-    pub bid_tree: Arc<PriceLevelTree>,
-    pub ask_tree: Arc<PriceLevelTree>,
+#[async_trait]
+pub trait PriceLevelTree: Send + Sync {
+    fn new() -> Self;
+    fn insert(&self, price: f64, price_level: PriceLevel) -> Result<(), OrderBookError>;
+    fn remove(&self, price: f64) -> Result<(), OrderBookError>;
 }
 
-impl OrderBook {
-    pub fn new(ticker: &str, exchanges: Vec<Exchange>) -> Self {
-        OrderBook {
-            ticker: String::from(ticker),
+pub struct AggBook<B: OrderBook + 'static> {
+    pub pair: [String; 2],
+    pub exchanges: Vec<Exchange>,
+    pub order_book: Arc<B>,
+}
+
+pub trait OrderBook: Send + Sync {
+    fn update_book(&self, price_level_update: PriceLevelUpdate) -> Result<(), OrderBookError>;
+}
+
+impl<B> AggBook<B>
+where
+    B: OrderBook,
+{
+    pub fn new(pair: [&str; 2], exchanges: Vec<Exchange>, order_book: Arc<B>) -> Self {
+        AggBook {
+            pair: [pair[0].to_string(), pair[1].to_string()],
             exchanges,
-            bid_tree: Arc::new(RwLock::new(BTreeMap::new())),
-            ask_tree: Arc::new(RwLock::new(BTreeMap::new())),
+            order_book,
         }
     }
 
@@ -43,7 +57,7 @@ impl OrderBook {
             handles.extend(
                 exchange
                     .spawn_order_book_service(
-                        &self.ticker,
+                        [&self.pair[0], &self.pair[1]],
                         order_book_depth,
                         price_level_tx.clone(),
                     )
@@ -51,12 +65,13 @@ impl OrderBook {
             )
         }
 
-        let bid_tree = self.bid_tree.clone();
-        let ask_tree = self.ask_tree.clone();
+        let order_book = self.order_book.clone();
 
         handles.push(tokio::spawn(async move {
             while let Some(price_level_update) = price_level_rx.recv().await {
-                update_bid_ask_trees(&bid_tree, &ask_tree, price_level_update)?;
+                order_book.update_book(price_level_update)?;
+
+                // update_bid_ask_trees(&bid_tree, &ask_tree, price_level_update)?;
             }
 
             Ok::<(), OrderBookError>(())
@@ -89,7 +104,7 @@ impl OrderBook {
             handles.extend(
                 exchange
                     .spawn_order_book_service(
-                        &self.ticker,
+                        [&self.pair[0], &self.pair[1]],
                         order_book_depth,
                         price_level_tx.clone(),
                     )
@@ -97,13 +112,12 @@ impl OrderBook {
             )
         }
 
-        let bid_tree = self.bid_tree.clone();
-        let ask_tree = self.ask_tree.clone();
+        let order_book = self.order_book.clone();
 
         handles.push(tokio::spawn(async move {
             //TODO: keep track of the bid ask spread
             while let Some(price_level_update) = price_level_rx.recv().await {
-                update_bid_ask_trees(&bid_tree, &ask_tree, price_level_update)?;
+                order_book.update_book(price_level_update)?;
             }
 
             Ok::<(), OrderBookError>(())
@@ -115,45 +129,6 @@ impl OrderBook {
     //TODO: basically spawn a service that will listen to updates from all of the exchanges, and send an update through a channel when the orderbook has updated
     //This service will spawn a thread for each exchange that it needs to listen to and then send the update through a channel where the order book will be updated here
     //Then you can update the corresponding tx rx depending on the orderbook that is spawned
-}
-
-#[inline(always)]
-fn update_bid_ask_trees(
-    bid_tree: &PriceLevelTree,
-    ask_tree: &PriceLevelTree,
-    price_level_update: PriceLevelUpdate,
-) -> Result<(), OrderBookError> {
-    match price_level_update {
-        PriceLevelUpdate::Bid(price_level) => {
-            if price_level.quantity == 0.0 {
-                bid_tree
-                    .write()
-                    .map_err(|_| OrderBookError::PoisonedLockOnBTreeMap)?
-                    .remove(&OrderedFloat(price_level.price));
-            } else {
-                //Insert/update tree
-                bid_tree
-                    .write()
-                    .map_err(|_| OrderBookError::PoisonedLockOnBTreeMap)?
-                    .insert(OrderedFloat(price_level.price), price_level);
-            }
-        }
-        PriceLevelUpdate::Ask(price_level) => {
-            if price_level.quantity == 0.0 {
-                ask_tree
-                    .write()
-                    .map_err(|_| OrderBookError::PoisonedLockOnBTreeMap)?
-                    .remove(&OrderedFloat(price_level.price));
-            } else {
-                //Insert/update tree
-                ask_tree
-                    .write()
-                    .map_err(|_| OrderBookError::PoisonedLockOnBTreeMap)?
-                    .insert(OrderedFloat(price_level.price), price_level);
-            }
-        }
-    }
-    Ok(())
 }
 
 #[derive(Debug)]
@@ -181,23 +156,26 @@ pub enum PriceLevelUpdate {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use crate::{
         exchanges::{binance::Binance, Exchange, OrderBookService},
-        order_book::OrderBook,
+        order_book::AggBook,
         order_book::{PriceLevel, PriceLevelUpdate},
     };
 
+    use super::btree_map::BTreeMapOrderBook;
+
     #[tokio::test]
     async fn test_order_book_service() {
-        let handles = OrderBook::new("bnbbtc", vec![Exchange::Binance])
-            .spawn_order_book_service(5000, 100)
-            .await
-            .expect("handle error");
-
-        let handles_0 = OrderBook::new("bnbusdt", vec![Exchange::Binance])
-            .spawn_order_book_service(5000, 100)
-            .await
-            .expect("handle error");
+        let handles = AggBook::new(
+            ["btc", "bnb"],
+            vec![Exchange::Binance],
+            Arc::new(BTreeMapOrderBook::new()),
+        )
+        .spawn_order_book_service(5000, 100)
+        .await
+        .expect("handle error");
 
         for handle in handles {
             handle.await.expect("handle error").expect("handle error");
