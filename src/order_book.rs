@@ -56,7 +56,7 @@ impl OrderBook {
 
         handles.push(tokio::spawn(async move {
             while let Some(price_level_update) = price_level_rx.recv().await {
-                update_bid_ask_trees(bid_tree.clone(), &ask_tree, price_level_update)?;
+                update_bid_ask_trees(&bid_tree, &ask_tree, price_level_update)?;
             }
 
             Ok::<(), OrderBookError>(())
