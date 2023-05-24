@@ -1,4 +1,7 @@
-use crate::{exchanges::binance::BinanceError, order_book::PriceLevelUpdate};
+use crate::{
+    exchanges::{binance::BinanceError, kraken::KrakenError},
+    order_book::PriceLevelUpdate,
+};
 
 #[derive(thiserror::Error, Debug)]
 pub enum OrderBookError {
@@ -12,6 +15,8 @@ pub enum OrderBookError {
     SerdeJsonError(#[from] serde_json::Error),
     #[error("Binance error")]
     BinanceError(#[from] BinanceError),
+    #[error("Kraken error")]
+    KrakenError(#[from] KrakenError),
     #[error("Error when sending price level update")]
     PriceLevelUpdateSendError(#[from] tokio::sync::mpsc::error::SendError<PriceLevelUpdate>),
     #[error("Poisoned lock")]

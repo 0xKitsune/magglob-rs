@@ -1,13 +1,11 @@
 ## magglob
-Modular aggregated limit order book.
+Modular aggregated limit order book
 
 ## TODOs
 
-- Add Exchanges
+
+- Add more Exchanges
 - Add benches
 - Add docs
 - Add tests
-
-## Upgrades
-
-- Update the OrderBook to be generic with specific traits methods for insert, remove, get. Then you can have this be very modular.
+- Add different OrderBook variants (RBTree, AVL, etc.)
