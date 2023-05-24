@@ -1,10 +1,18 @@
 ## magglob
 Modular aggregated limit order book
 
-## TODOs
+## Supported Exchanges
+
+| Exchange | Status |
+|----------|------|
+| Binance | ✅||
+| Kraken  | 🏗️||
+| Coinbase  | 🏗️||
+| Coinbase  | 🏗️||
+| Crypto.com  | 🏗️||
 
 
-- Add more Exchanges
+## In Progress
 - Add benches
 - Add docs
 - Add tests
