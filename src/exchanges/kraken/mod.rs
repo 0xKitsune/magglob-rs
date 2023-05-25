@@ -36,7 +36,7 @@ const STREAM_BUFFER: usize = 1000;
 //Add a comment for what this is
 const GET_DEPTH_SNAPSHOT: Vec<u8> = vec![];
 
-pub struct Kraken {}
+pub struct Kraken;
 
 #[derive(Serialize, Debug)]
 pub struct SubscribeMessage {
@@ -295,8 +295,6 @@ impl<'a> Visitor<'a> for StringF64ArrayVisitor {
         let mut is_empty = true;
 
         //TODO: FIXME: going to have to make two of these, one for snapshots, one for updates
-
-        fix this ^^
 
         while let Some(arr) = seq.next_element::<[String; 3]>()? {
             is_empty = false; // Data is present

@@ -2,6 +2,7 @@ pub mod binance;
 pub mod bybit;
 pub mod coinbase;
 pub mod crypto_dot_com;
+mod exchange_utils;
 pub mod kraken;
 
 use async_trait::async_trait;
