@@ -7,16 +7,18 @@ use std::{
 use ordered_float::{Float, OrderedFloat};
 use tokio::task::JoinHandle;
 
+pub mod rbtree;
+
 use crate::{error::OrderBookError, exchanges::Exchange};
+
+pub trait OrderBook: Send + Sync {
+    fn update_book(&self, price_level_update: PriceLevelUpdate) -> Result<(), OrderBookError>;
+}
 
 pub struct AggregatedOrderBook<B: OrderBook + 'static> {
     pub pair: [String; 2],
     pub exchanges: Vec<Exchange>,
     pub order_book: Arc<B>,
-}
-
-pub trait OrderBook: Send + Sync {
-    fn update_book(&self, price_level_update: PriceLevelUpdate) -> Result<(), OrderBookError>;
 }
 
 impl<B> AggregatedOrderBook<B>
@@ -41,6 +43,7 @@ where
         let (price_level_tx, mut price_level_rx) =
             tokio::sync::mpsc::channel::<PriceLevelUpdate>(price_level_buffer);
 
+        //TODO: prob update this to be abstracted
         let mut handles = vec![];
 
         for exchange in self.exchanges.iter() {
@@ -121,7 +124,7 @@ where
     //Then you can update the corresponding tx rx depending on the orderbook that is spawned
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PriceLevel {
     pub price: f64,
     pub quantity: f64,

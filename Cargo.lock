@@ -745,6 +745,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "intrusive-collections"
+version = "0.9.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f4f90afb01281fdeffb0f8e082d230cbe4f888f837cc90759696b858db1a700"
+dependencies = [
+ "memoffset",
+]
+
+[[package]]
 name = "io-lifetimes"
 version = "1.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -868,6 +877,7 @@ dependencies = [
  "async-trait",
  "criterion",
  "futures",
+ "intrusive-collections",
  "log",
  "log4rs",
  "ordered-float 3.7.0",

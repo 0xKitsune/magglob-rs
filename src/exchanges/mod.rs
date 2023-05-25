@@ -13,7 +13,7 @@ use crate::{error::OrderBookError, order_book::PriceLevel};
 
 use self::binance::Binance;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Exchange {
     // ByBit,
     Binance,
